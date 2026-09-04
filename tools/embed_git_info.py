@@ -4,25 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 UNKNOWN_VALUE = "unknown"
-
-# Environment switch used by release builds (see build_firmware.sh). When set, no
-# git commands are run and every value is emitted as UNKNOWN_VALUE, so the frozen
-# module is byte-identical whether the source came from a git checkout, a shallow
-# clone, a fork, or a source archive without any .git metadata at all.
-REPRODUCIBLE_ENV = "SPECTER_REPRODUCIBLE_BUILD"
-
-# Optional explicit overrides. An empty value is treated as UNKNOWN_VALUE. These
-# let a release process pin documented provenance constants without reintroducing
-# any dependency on the local clone state.
-REPOSITORY_ENV = "SPECTER_GIT_REPOSITORY"
-BRANCH_ENV = "SPECTER_GIT_BRANCH"
-COMMIT_ENV = "SPECTER_GIT_COMMIT"
 
 
 def _run_git(args: list[str]) -> Optional[str]:
@@ -33,47 +19,25 @@ def _run_git(args: list[str]) -> Optional[str]:
     return result.decode().strip() or None
 
 
-def _env_override(name: str) -> Optional[str]:
-    value = os.environ.get(name)
-    if value is None:
-        return None
-    return value.strip() or UNKNOWN_VALUE
-
-
-def _reproducible_build() -> bool:
-    return os.environ.get(REPRODUCIBLE_ENV, "").strip() not in ("", "0", "false", "False")
-
-
 def discover_repository() -> str:
-    override = _env_override(REPOSITORY_ENV)
-    if override is not None:
-        return override
-    # A clone remote is build-environment metadata, not source identity. Using
-    # a canonical upstream URL would also misattribute fork-only commits to the
-    # upstream repository, so do not embed a repository URL at all.
-    return UNKNOWN_VALUE
+    repo = _run_git(["config", "--get", "remote.origin.url"])
+    if repo:
+        return repo
+    path = _run_git(["rev-parse", "--show-toplevel"])
+    return path or UNKNOWN_VALUE
 
 
 def discover_branch() -> str:
-    override = _env_override(BRANCH_ENV)
-    if override is not None:
-        return override
-    # Branch/tag refs can differ for the same commit (branch checkout, detached
-    # HEAD, shallow clone, etc.), so embedding them breaks reproducible builds.
-    return UNKNOWN_VALUE
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    if branch and branch != "HEAD":
+        return branch
+    describe = _run_git(["describe", "--all"])
+    return describe or UNKNOWN_VALUE
 
 
-def discover_commit(reproducible: bool) -> str:
-    override = _env_override(COMMIT_ENV)
-    if override is not None:
-        return override
-    if reproducible:
-        # The full object id is only present in a git checkout; a source archive
-        # has no .git and would embed "unknown" instead. Release builds must not
-        # depend on how the source was obtained, so drop it entirely.
-        return UNKNOWN_VALUE
-    # Dev builds embed the concrete revision. Use the full object id: git's
-    # default abbreviated SHA length can vary with the objects present in a clone.
+def discover_commit() -> str:
+    # Use the full object id: git's default abbreviated SHA length can vary with
+    # the objects present in a clone.
     commit = _run_git(["rev-parse", "HEAD"])
     if commit:
         return commit
@@ -90,9 +54,12 @@ def build_content(repository: str, branch: str, commit: str) -> str:
 
 
 def write_git_info(path: Path, reproducible: bool) -> None:
-    repository = discover_repository()
-    branch = discover_branch()
-    commit = discover_commit(reproducible)
+    if reproducible:
+        repository = branch = commit = UNKNOWN_VALUE
+    else:
+        repository = discover_repository()
+        branch = discover_branch()
+        commit = discover_commit()
 
     content = build_content(repository, branch, commit)
 
@@ -120,18 +87,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reproducible",
         action="store_true",
-        help=(
-            "emit static values with no git lookups (also enabled by the "
-            "%s environment variable)" % REPRODUCIBLE_ENV
-        ),
+        help="emit static values with no git lookups",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    reproducible = args.reproducible or _reproducible_build()
-    write_git_info(Path(args.output), reproducible)
+    write_git_info(Path(args.output), args.reproducible)
 
 
 if __name__ == "__main__":

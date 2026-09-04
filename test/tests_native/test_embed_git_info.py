@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 import tempfile
@@ -15,21 +14,19 @@ def run_git(cwd: Path, *args: str) -> str:
     ).strip()
 
 
-def run_script(output: Path, cwd: Path, extra_env=None) -> str:
-    env = dict(os.environ)
-    for key in ("SPECTER_REPRODUCIBLE_BUILD", "SPECTER_GIT_REPOSITORY",
-                "SPECTER_GIT_BRANCH", "SPECTER_GIT_COMMIT"):
-        env.pop(key, None)
-    if extra_env:
-        env.update(extra_env)
+def run_script(output: Path, cwd: Path, extra_args=None) -> str:
+    args = [sys.executable, str(SCRIPT)]
+    if extra_args:
+        args.extend(extra_args)
+    args.append(str(output))
     subprocess.check_call(
-        [sys.executable, str(SCRIPT), str(output)], cwd=cwd, env=env
+        args, cwd=cwd
     )
     return output.read_text()
 
 
 class GitInfoReproducibilityTest(TestCase):
-    def test_same_commit_ignores_remote_and_checkout_ref(self):
+    def test_developer_build_embeds_local_checkout_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source"
@@ -69,15 +66,18 @@ class GitInfoReproducibilityTest(TestCase):
             content_a = run_script(root / "git-info-a.py", clone_a)
             content_b = run_script(root / "git-info-b.py", clone_b)
 
-            self.assertEqual(content_a, content_b)
-            # Checkout metadata is not source identity. Keeping it neutral also
-            # avoids attributing fork-only commits to the upstream repository.
-            self.assertIn("REPOSITORY = 'unknown'", content_a)
-            self.assertIn("BRANCH = 'unknown'", content_a)
+            self.assertNotEqual(content_a, content_b)
+            self.assertIn(
+                "REPOSITORY = 'git@example.invalid:fork/specter-diy.git'",
+                content_a,
+            )
+            self.assertIn("BRANCH = 'release-test'", content_a)
             self.assertIn("COMMIT = %r" % commit, content_a)
-            self.assertNotIn("release-test", content_a)
-            self.assertNotIn("example.invalid", content_a)
-            self.assertNotIn("cryptoadvance/specter-diy", content_a)
+            self.assertIn(
+                "REPOSITORY = 'https://example.invalid/other/specter-diy.git'",
+                content_b,
+            )
+            self.assertIn("COMMIT = %r" % commit, content_b)
 
     def test_without_git_metadata_uses_stable_unknown_values(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,7 +91,7 @@ class GitInfoReproducibilityTest(TestCase):
             self.assertIn("COMMIT = 'unknown'", content)
 
     def test_reproducible_build_output_is_source_acquisition_independent(self):
-        """Release builds (SPECTER_REPRODUCIBLE_BUILD=1) must produce identical
+        """Reproducible builds must produce identical
         output from a git checkout and from a .git-less source archive."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -111,9 +111,11 @@ class GitInfoReproducibilityTest(TestCase):
             archive.mkdir()
             (archive / "payload.txt").write_text("same source\n")
 
-            env = {"SPECTER_REPRODUCIBLE_BUILD": "1"}
-            from_checkout = run_script(root / "a.py", checkout, env)
-            from_archive = run_script(root / "b.py", archive, env)
+            reproducible_args = ["--reproducible"]
+            from_checkout = run_script(
+                root / "a.py", checkout, reproducible_args
+            )
+            from_archive = run_script(root / "b.py", archive, reproducible_args)
 
             self.assertEqual(from_checkout, from_archive)
             self.assertIn("REPOSITORY = 'unknown'", from_checkout)
@@ -121,21 +123,15 @@ class GitInfoReproducibilityTest(TestCase):
             self.assertIn("COMMIT = 'unknown'", from_checkout)
             self.assertNotIn(commit, from_checkout)
 
-    def test_explicit_overrides_are_embedded(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            content = run_script(
-                root / "git-info.py",
-                root,
-                {
-                    "SPECTER_GIT_REPOSITORY": "https://example.org/specter-diy",
-                    "SPECTER_GIT_BRANCH": "v9.9.9",
-                    "SPECTER_GIT_COMMIT": "0" * 40,
-                },
-            )
+    def test_make_forwards_reproducible_mode(self):
+        developer_command = subprocess.check_output(
+            ["make", "-n", "git-info"], cwd=REPO_ROOT, text=True
+        )
+        reproducible_command = subprocess.check_output(
+            ["make", "-n", "git-info", "REPRODUCIBLE=1"],
+            cwd=REPO_ROOT,
+            text=True,
+        )
 
-            self.assertIn(
-                "REPOSITORY = 'https://example.org/specter-diy'", content
-            )
-            self.assertIn("BRANCH = 'v9.9.9'", content)
-            self.assertIn("COMMIT = '%s'" % ("0" * 40), content)
+        self.assertNotIn("--reproducible", developer_command)
+        self.assertIn("--reproducible", reproducible_command)
