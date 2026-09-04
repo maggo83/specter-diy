@@ -125,7 +125,7 @@ class GitInfoReproducibilityTest(TestCase):
 
     def test_make_forwards_reproducible_mode(self):
         developer_command = subprocess.check_output(
-            ["make", "-n", "git-info"], cwd=REPO_ROOT, text=True
+            ["make", "-n", "git-info", "REPRODUCIBLE=0"], cwd=REPO_ROOT, text=True
         )
         reproducible_command = subprocess.check_output(
             ["make", "-n", "git-info", "REPRODUCIBLE=1"],
