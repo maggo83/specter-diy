@@ -21,10 +21,7 @@ def _run_git(args: list[str]) -> Optional[str]:
 
 def discover_repository() -> str:
     repo = _run_git(["config", "--get", "remote.origin.url"])
-    if repo:
-        return repo
-    path = _run_git(["rev-parse", "--show-toplevel"])
-    return path or UNKNOWN_VALUE
+    return repo or UNKNOWN_VALUE
 
 
 def discover_branch() -> str:

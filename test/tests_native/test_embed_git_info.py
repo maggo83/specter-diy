@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,16 @@ class GitInfoReproducibilityTest(TestCase):
             self.assertIn("BRANCH = 'unknown'", content)
             self.assertIn("COMMIT = 'unknown'", content)
 
+    def test_without_origin_uses_unknown_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_git(root, "init")
+
+            content = run_script(root / "git-info.py", root)
+
+            self.assertIn("REPOSITORY = 'unknown'", content)
+            self.assertNotIn(str(root), content)
+
     def test_reproducible_build_output_is_source_acquisition_independent(self):
         """Reproducible builds must produce identical
         output from a git checkout and from a .git-less source archive."""
@@ -124,6 +135,12 @@ class GitInfoReproducibilityTest(TestCase):
             self.assertNotIn(commit, from_checkout)
 
     def test_make_forwards_reproducible_mode(self):
+        environment_command = subprocess.check_output(
+            ["make", "-n", "git-info"],
+            cwd=REPO_ROOT,
+            env={**os.environ, "REPRODUCIBLE": "1"},
+            text=True,
+        )
         developer_command = subprocess.check_output(
             ["make", "-n", "git-info", "REPRODUCIBLE=0"], cwd=REPO_ROOT, text=True
         )
@@ -133,5 +150,6 @@ class GitInfoReproducibilityTest(TestCase):
             text=True,
         )
 
+        self.assertIn("--reproducible", environment_command)
         self.assertNotIn("--reproducible", developer_command)
         self.assertIn("--reproducible", reproducible_command)

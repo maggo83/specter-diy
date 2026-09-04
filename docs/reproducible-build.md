@@ -2,6 +2,8 @@
 
 With [docker](https://docs.docker.com/get-docker/) you can build the firmware yourself in the same environment as we do, and verify that binaries in github releases have the same hash. This way you can be sure that firmware upgrades signed by our public keys are actually built from the code in this repository, no backdoors included.
 
+Release builds run with `REPRODUCIBLE=1`, which omits local Git provenance. Use `make disco REPRODUCIBLE=1` to request this mode directly; omit the parameter for a developer build that records the local repository, branch, and commit.
+
 From the root of the repository:
 
 1. Set up bootloader to use production keys:
